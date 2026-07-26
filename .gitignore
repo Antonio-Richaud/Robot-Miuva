@@ -1,0 +1,76 @@
+# Robot-Miuva
+# Archivos generados, temporales y específicos del sistema operativo.
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Editores e IDE
+.vscode/
+.idea/
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*~
+*.swp
+*.swo
+
+# MPLAB X / NetBeans: conservar los archivos públicos del proyecto,
+# pero excluir preferencias privadas y salidas de compilación.
+**/nbproject/private/
+**/build/
+**/dist/
+**/.generated_files/
+**/debug/
+**/release/
+
+# MPLAB XC8 y herramientas PIC
+*.o
+*.obj
+*.d
+*.p1
+*.pre
+*.sdb
+*.sym
+*.lst
+*.map
+*.elf
+*.cof
+*.hex
+*.mch
+*.err
+
+# Registros y temporales
+*.log
+*.tmp
+*.temp
+.cache/
+tmp/
+temp/
+
+# Archivos comprimidos y copias locales
+*.zip
+*.7z
+*.rar
+*.bak
+*.backup
+
+# Variables o configuraciones locales
+.env
+.env.*
+!.env.example
