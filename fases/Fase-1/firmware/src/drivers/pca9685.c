@@ -1,3 +1,7 @@
+#ifndef _XTAL_FREQ
+#define _XTAL_FREQ 12000000UL
+#endif
+
 #include <xc.h>
 
 #include "pca9685.h"
