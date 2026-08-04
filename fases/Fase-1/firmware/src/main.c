@@ -8,8 +8,9 @@
  *   SW  -> RB2 con resistencia pull-up externa de 10 kohm
  *
  * El sistema calibra el centro durante el arranque, aplica zona muerta,
- * promedio, filtrado y limite de velocidad. Esta prueba amplia el recorrido
- * a 287-327 cuentas del PCA9685, aproximadamente 1400-1600 us.
+ * promedio, filtrado y limite de velocidad. Esta prueba utiliza el rango
+ * estandar inicial de 205 a 409 cuentas del PCA9685, aproximadamente
+ * 1000 a 2000 us con una frecuencia PWM nominal de 50 Hz.
  *
  * Indicadores:
  *   Azul fijo  -> calibracion inicial; no mover el mando.
@@ -41,10 +42,10 @@
 
 #define SERVO_CHANNEL_0       0u
 #define SERVO_CHANNEL_1       1u
-#define SERVO_MIN_COUNT     287u
+#define SERVO_MIN_COUNT     205u
 #define SERVO_CENTER_COUNT  307u
-#define SERVO_MAX_COUNT     327u
-#define SERVO_RANGE_COUNTS   20u
+#define SERVO_MAX_COUNT     409u
+#define SERVO_RANGE_COUNTS  102u
 
 #define JOYSTICK_STARTUP_SAMPLES 32u
 #define JOYSTICK_LOOP_SAMPLES     4u
