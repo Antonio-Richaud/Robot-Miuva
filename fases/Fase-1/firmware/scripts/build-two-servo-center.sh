@@ -8,12 +8,12 @@ XC8="/c/Program Files/Microchip/xc8/v3.10/bin/xc8-cc.exe"
 MPLAB_PACKS="/c/Program Files/Microchip/MPLABX/v6.30/packs"
 USER_PACKS="$HOME/.mchp_packs"
 SRC="fases/Fase-1/firmware/src"
-BUILD="fases/Fase-1/firmware/build/centro-dos-servos"
+BUILD="fases/Fase-1/firmware/build/movimiento-suave-dos-servos"
 DIST="fases/Fase-1/firmware/dist"
-TARGET="RobotMiuvaTwoServoCenter"
+TARGET="RobotMiuvaTwoServoSweep"
 
 printf '%s\n' "============================================================"
-printf '%s\n' " COMPILACION: CENTRO SG90 EN CANALES 0 Y 1"
+printf '%s\n' " COMPILACION: MOVIMIENTO SUAVE DE DOS SG90"
 printf '%s\n' "============================================================"
 
 if [ ! -f "$XC8" ]; then
