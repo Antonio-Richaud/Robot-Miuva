@@ -11,6 +11,7 @@
  * promedio, filtrado y limite de velocidad. Esta prueba utiliza el rango
  * estandar inicial de 205 a 409 cuentas del PCA9685, aproximadamente
  * 1000 a 2000 us con una frecuencia PWM nominal de 50 Hz.
+ * La posicion avanza como maximo 4 cuentas por ciclo de control.
  *
  * Indicadores:
  *   Azul fijo  -> calibracion inicial; no mover el mando.
@@ -46,6 +47,7 @@
 #define SERVO_CENTER_COUNT  307u
 #define SERVO_MAX_COUNT     409u
 #define SERVO_RANGE_COUNTS  102u
+#define SERVO_MAX_STEP_COUNTS 4u
 
 #define JOYSTICK_STARTUP_SAMPLES 32u
 #define JOYSTICK_LOOP_SAMPLES     4u
@@ -179,14 +181,30 @@ static uint16_t apply_direction(uint16_t pulse, uint8_t inverted)
 
 static uint16_t approach_target(uint16_t current, uint16_t target)
 {
+    uint16_t distance;
+
     if (current < target)
     {
-        return (uint16_t)(current + 1u);
+        distance = (uint16_t)(target - current);
+
+        if (distance > SERVO_MAX_STEP_COUNTS)
+        {
+            return (uint16_t)(current + SERVO_MAX_STEP_COUNTS);
+        }
+
+        return target;
     }
 
     if (current > target)
     {
-        return (uint16_t)(current - 1u);
+        distance = (uint16_t)(current - target);
+
+        if (distance > SERVO_MAX_STEP_COUNTS)
+        {
+            return (uint16_t)(current - SERVO_MAX_STEP_COUNTS);
+        }
+
+        return target;
     }
 
     return current;
