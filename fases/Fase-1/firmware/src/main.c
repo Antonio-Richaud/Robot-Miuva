@@ -1,18 +1,14 @@
 /**
  * Robot-Miuva - Fase 1
- * Prueba de deteccion I2C del PCA9685.
+ * Prueba de centrado de un SG90 mediante PCA9685.
  *
- * Cableado esperado:
- *   Miuva USB/5V -> PCA9685 VCC
- *   Miuva GND    -> PCA9685 GND
- *   Miuva RB0    -> PCA9685 SDA
- *   Miuva RB1    -> PCA9685 SCL
- *
- * No conectar V+, servos ni fuente externa durante esta prueba.
+ * Canal utilizado: 0
+ * Frecuencia PWM: 50 Hz
+ * Pulso inicial: 1500 us aprox. (307 cuentas de 4096)
  *
  * Indicadores:
- *   Verde lento -> PCA9685 detectado en la direccion 0x40.
- *   Rojo rapido -> no hubo respuesta I2C.
+ *   Verde fijo -> PCA9685 inicializado y canal 0 centrado.
+ *   Rojo rapido -> error de comunicacion o configuracion.
  */
 
 #define _XTAL_FREQ 12000000UL
@@ -30,9 +26,11 @@
 #define LED_ON  0u
 #define LED_OFF 1u
 
+#define SERVO_CHANNEL_0       0u
+#define SERVO_CENTER_1500_US 307u
+
 static void system_initialize(void)
 {
-    /* RE0, RE1 y RE2 se utilizan como salidas digitales. */
     ANSELE = 0x00;
 
     LED_GREEN_LAT = LED_OFF;
@@ -44,47 +42,48 @@ static void system_initialize(void)
     TRISEbits.TRISE2 = 0;
 }
 
-static void show_pca9685_detected(void)
+static void show_success(void)
 {
     LED_RED_LAT = LED_OFF;
     LED_BLUE_LAT = LED_OFF;
-
     LED_GREEN_LAT = LED_ON;
-    __delay_ms(700);
-    LED_GREEN_LAT = LED_OFF;
-    __delay_ms(700);
 }
 
-static void show_i2c_error(void)
+static void show_error_forever(void)
 {
     LED_GREEN_LAT = LED_OFF;
     LED_BLUE_LAT = LED_OFF;
 
-    LED_RED_LAT = LED_ON;
-    __delay_ms(120);
-    LED_RED_LAT = LED_OFF;
-    __delay_ms(120);
+    while (1)
+    {
+        LED_RED_LAT = LED_ON;
+        __delay_ms(120);
+        LED_RED_LAT = LED_OFF;
+        __delay_ms(120);
+    }
 }
 
 int main(void)
 {
-    bool pca9685_detected;
-
     system_initialize();
     __delay_ms(100);
 
     i2c_master_initialize();
-    pca9685_detected = pca9685_probe();
+
+    if (!pca9685_initialize_50hz())
+    {
+        show_error_forever();
+    }
+
+    if (!pca9685_set_channel_pulse(SERVO_CHANNEL_0, SERVO_CENTER_1500_US))
+    {
+        show_error_forever();
+    }
+
+    show_success();
 
     while (1)
     {
-        if (pca9685_detected)
-        {
-            show_pca9685_detected();
-        }
-        else
-        {
-            show_i2c_error();
-        }
+        __delay_ms(1000);
     }
 }
