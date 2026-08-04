@@ -1,13 +1,13 @@
 /**
  * Robot-Miuva - Fase 1
- * Prueba de centrado de un SG90 mediante PCA9685.
+ * Prueba de centrado de dos SG90 mediante PCA9685.
  *
- * Canal utilizado: 0
+ * Canales utilizados: 0 y 1
  * Frecuencia PWM: 50 Hz
  * Pulso inicial: 1500 us aprox. (307 cuentas de 4096)
  *
  * Indicadores:
- *   Verde fijo -> PCA9685 inicializado y canal 0 centrado.
+ *   Verde fijo -> PCA9685 inicializado y ambos canales centrados.
  *   Rojo rapido -> error de comunicacion o configuracion.
  */
 
@@ -27,6 +27,7 @@
 #define LED_OFF 1u
 
 #define SERVO_CHANNEL_0       0u
+#define SERVO_CHANNEL_1       1u
 #define SERVO_CENTER_1500_US 307u
 
 static void system_initialize(void)
@@ -76,6 +77,13 @@ int main(void)
     }
 
     if (!pca9685_set_channel_pulse(SERVO_CHANNEL_0, SERVO_CENTER_1500_US))
+    {
+        show_error_forever();
+    }
+
+    __delay_ms(100);
+
+    if (!pca9685_set_channel_pulse(SERVO_CHANNEL_1, SERVO_CENTER_1500_US))
     {
         show_error_forever();
     }
