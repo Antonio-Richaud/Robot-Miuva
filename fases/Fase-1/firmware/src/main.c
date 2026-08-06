@@ -8,16 +8,19 @@
  *   SW  -> RB2 con resistencia pull-up externa de 10 kohm
  *
  * El sistema calibra el centro durante el arranque, aplica zona muerta,
- * promedio, filtrado y limite de velocidad. Esta prueba utiliza el rango
- * estandar inicial de 205 a 409 cuentas del PCA9685, aproximadamente
- * 1000 a 2000 us con una frecuencia PWM nominal de 50 Hz.
+ * promedio, filtrado y limite de velocidad. Utiliza el rango de 205 a 409
+ * cuentas del PCA9685, aproximadamente 1000 a 2000 us a 50 Hz nominales.
  * La posicion avanza como maximo 4 cuentas por ciclo de control.
  *
+ * Pulsador:
+ *   - Mientras esta presionado, ambos servos regresan al centro.
+ *   - Cada pulsacion completa cambia el color operativo del LED RGB.
+ *   - Secuencia: verde, azul, cian, magenta, amarillo, blanco.
+ *
  * Indicadores:
- *   Azul fijo  -> calibracion inicial; no mover el mando.
- *   Verde fijo -> control manual activo.
- *   Azul fijo  -> boton presionado; ambos servos vuelven al centro.
- *   Rojo rapido -> error de inicializacion o comunicacion.
+ *   Azul fijo durante el arranque -> calibracion; no mover el mando.
+ *   Color seleccionado            -> control manual activo.
+ *   Rojo rapido                   -> error de inicializacion o comunicacion.
  */
 
 #define _XTAL_FREQ 12000000UL
@@ -37,6 +40,14 @@
 #define LED_ON  0u
 #define LED_OFF 1u
 
+#define LED_COLOR_GREEN   0u
+#define LED_COLOR_BLUE    1u
+#define LED_COLOR_CYAN    2u
+#define LED_COLOR_MAGENTA 3u
+#define LED_COLOR_YELLOW  4u
+#define LED_COLOR_WHITE   5u
+#define LED_COLOR_COUNT   6u
+
 #define ADC_CHANNEL_X 0u
 #define ADC_CHANNEL_Y 1u
 #define ADC_MAX_VALUE 1023u
@@ -55,18 +66,24 @@
 #define JOYSTICK_CENTER_MIN     256u
 #define JOYSTICK_CENTER_MAX     768u
 #define FILTER_DIVISOR            4u
+#define BUTTON_DEBOUNCE_SAMPLES   3u
 #define CONTROL_PERIOD_MS        20u
 
 #define SERVO_0_INVERTED 0u
 #define SERVO_1_INVERTED 0u
 
+static void set_led_rgb(bool red_on, bool green_on, bool blue_on)
+{
+    LED_RED_LAT = red_on ? LED_ON : LED_OFF;
+    LED_GREEN_LAT = green_on ? LED_ON : LED_OFF;
+    LED_BLUE_LAT = blue_on ? LED_ON : LED_OFF;
+}
+
 static void system_initialize(void)
 {
     ANSELE = 0x00;
 
-    LED_GREEN_LAT = LED_OFF;
-    LED_RED_LAT = LED_OFF;
-    LED_BLUE_LAT = LED_OFF;
+    set_led_rgb(false, false, false);
 
     TRISEbits.TRISE0 = 0;
     TRISEbits.TRISE1 = 0;
@@ -79,29 +96,43 @@ static void system_initialize(void)
 
 static void show_calibrating(void)
 {
-    LED_GREEN_LAT = LED_OFF;
-    LED_RED_LAT = LED_OFF;
-    LED_BLUE_LAT = LED_ON;
+    set_led_rgb(false, false, true);
 }
 
-static void show_normal(void)
+static void show_operating_color(uint8_t color)
 {
-    LED_RED_LAT = LED_OFF;
-    LED_BLUE_LAT = LED_OFF;
-    LED_GREEN_LAT = LED_ON;
-}
+    switch (color)
+    {
+        case LED_COLOR_BLUE:
+            set_led_rgb(false, false, true);
+            break;
 
-static void show_button_pressed(void)
-{
-    LED_GREEN_LAT = LED_OFF;
-    LED_RED_LAT = LED_OFF;
-    LED_BLUE_LAT = LED_ON;
+        case LED_COLOR_CYAN:
+            set_led_rgb(false, true, true);
+            break;
+
+        case LED_COLOR_MAGENTA:
+            set_led_rgb(true, false, true);
+            break;
+
+        case LED_COLOR_YELLOW:
+            set_led_rgb(true, true, false);
+            break;
+
+        case LED_COLOR_WHITE:
+            set_led_rgb(true, true, true);
+            break;
+
+        case LED_COLOR_GREEN:
+        default:
+            set_led_rgb(false, true, false);
+            break;
+    }
 }
 
 static void show_error_forever(void)
 {
-    LED_GREEN_LAT = LED_OFF;
-    LED_BLUE_LAT = LED_OFF;
+    set_led_rgb(false, false, false);
 
     while (1)
     {
@@ -115,6 +146,38 @@ static void show_error_forever(void)
 static bool joystick_button_pressed(void)
 {
     return (PORTBbits.RB2 == 0u);
+}
+
+static bool update_button_state(
+    bool raw_pressed,
+    bool *stable_pressed,
+    bool *last_raw_pressed,
+    uint8_t *stable_samples)
+{
+    if (raw_pressed != *last_raw_pressed)
+    {
+        *last_raw_pressed = raw_pressed;
+        *stable_samples = 1u;
+        return false;
+    }
+
+    if (*stable_samples < BUTTON_DEBOUNCE_SAMPLES)
+    {
+        (*stable_samples)++;
+
+        if (*stable_samples < BUTTON_DEBOUNCE_SAMPLES)
+        {
+            return false;
+        }
+    }
+
+    if (*stable_pressed != raw_pressed)
+    {
+        *stable_pressed = raw_pressed;
+        return raw_pressed;
+    }
+
+    return false;
 }
 
 static uint16_t filter_adc(uint16_t previous, uint16_t sample)
@@ -234,6 +297,12 @@ int main(void)
     uint16_t target_1;
     uint16_t current_0 = SERVO_CENTER_COUNT;
     uint16_t current_1 = SERVO_CENTER_COUNT;
+    uint8_t selected_led_color = LED_COLOR_GREEN;
+    uint8_t button_stable_samples = 0u;
+    bool button_raw_pressed;
+    bool button_stable_pressed = false;
+    bool button_last_raw_pressed = false;
+    bool button_press_event;
 
     system_initialize();
     show_calibrating();
@@ -265,7 +334,7 @@ int main(void)
 
     filtered_x = center_x;
     filtered_y = center_y;
-    show_normal();
+    show_operating_color(selected_led_color);
 
     while (1)
     {
@@ -275,11 +344,29 @@ int main(void)
         filtered_x = filter_adc(filtered_x, raw_x);
         filtered_y = filter_adc(filtered_y, raw_y);
 
-        if (joystick_button_pressed())
+        button_raw_pressed = joystick_button_pressed();
+        button_press_event = update_button_state(
+            button_raw_pressed,
+            &button_stable_pressed,
+            &button_last_raw_pressed,
+            &button_stable_samples);
+
+        if (button_press_event)
+        {
+            selected_led_color++;
+
+            if (selected_led_color >= LED_COLOR_COUNT)
+            {
+                selected_led_color = LED_COLOR_GREEN;
+            }
+        }
+
+        show_operating_color(selected_led_color);
+
+        if (button_stable_pressed)
         {
             target_0 = SERVO_CENTER_COUNT;
             target_1 = SERVO_CENTER_COUNT;
-            show_button_pressed();
         }
         else
         {
@@ -289,7 +376,6 @@ int main(void)
             target_1 = apply_direction(
                 map_axis_to_pulse(filtered_y, center_y),
                 SERVO_1_INVERTED);
-            show_normal();
         }
 
         current_0 = approach_target(current_0, target_0);
