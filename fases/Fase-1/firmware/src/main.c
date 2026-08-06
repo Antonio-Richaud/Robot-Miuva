@@ -5,21 +5,23 @@
  * Conexiones:
  *   VRx -> RA0 / AN0 -> servo del canal 0
  *   VRy -> RA1 / AN1 -> servo del canal 1
- *   SW  -> RB2 con resistencia pull-up externa de 10 kohm
+ *   SW  -> RB2; el modulo cierra el pin hacia GND al presionarlo
  *
  * El sistema calibra el centro durante el arranque, aplica zona muerta,
- * promedio, filtrado y limite de velocidad. Utiliza el rango de 205 a 409
- * cuentas del PCA9685, aproximadamente 1000 a 2000 us a 50 Hz nominales.
- * La posicion avanza como maximo 4 cuentas por ciclo de control.
+ * promedio, filtrado y limite de velocidad. Esta prueba utiliza un rango
+ * ampliado de 111 a 492 cuentas del PCA9685, aproximadamente 544 a 2400 us
+ * con una frecuencia PWM nominal de 50 Hz.
  *
  * Pulsador:
  *   - Mientras esta presionado, ambos servos regresan al centro.
- *   - Cada pulsacion completa cambia el color operativo del LED RGB.
+ *   - Mientras esta presionado, el LED RGB se muestra blanco.
+ *   - Al soltarlo, cambia una sola vez el color operativo del LED RGB.
  *   - Secuencia: verde, azul, cian, magenta, amarillo, blanco.
  *
  * Indicadores:
  *   Azul fijo durante el arranque -> calibracion; no mover el mando.
  *   Color seleccionado            -> control manual activo.
+ *   Blanco mientras SW se pulsa   -> pulsador detectado y centrado activo.
  *   Rojo rapido                   -> error de inicializacion o comunicacion.
  */
 
@@ -52,13 +54,12 @@
 #define ADC_CHANNEL_Y 1u
 #define ADC_MAX_VALUE 1023u
 
-#define SERVO_CHANNEL_0       0u
-#define SERVO_CHANNEL_1       1u
-#define SERVO_MIN_COUNT     205u
-#define SERVO_CENTER_COUNT  307u
-#define SERVO_MAX_COUNT     409u
-#define SERVO_RANGE_COUNTS  102u
-#define SERVO_MAX_STEP_COUNTS 4u
+#define SERVO_CHANNEL_0        0u
+#define SERVO_CHANNEL_1        1u
+#define SERVO_MIN_COUNT      111u
+#define SERVO_CENTER_COUNT   307u
+#define SERVO_MAX_COUNT      492u
+#define SERVO_MAX_STEP_COUNTS  8u
 
 #define JOYSTICK_STARTUP_SAMPLES 32u
 #define JOYSTICK_LOOP_SAMPLES     4u
@@ -66,7 +67,7 @@
 #define JOYSTICK_CENTER_MIN     256u
 #define JOYSTICK_CENTER_MAX     768u
 #define FILTER_DIVISOR            4u
-#define BUTTON_DEBOUNCE_SAMPLES   3u
+#define BUTTON_DEBOUNCE_MS       25u
 #define CONTROL_PERIOD_MS        20u
 
 #define SERVO_0_INVERTED 0u
@@ -89,14 +90,23 @@ static void system_initialize(void)
     TRISEbits.TRISE1 = 0;
     TRISEbits.TRISE2 = 0;
 
-    /* RB2 recibe SW. El modulo cierra el pin hacia GND al presionarlo. */
+    /* RB2 como entrada digital para SW. */
     ANSELBbits.ANSB2 = 0;
     TRISBbits.TRISB2 = 1;
+
+    /* Pull-up interno adicional; la resistencia externa puede permanecer. */
+    WPUBbits.WPUB2 = 1;
+    INTCON2bits.RBPU = 0;
 }
 
 static void show_calibrating(void)
 {
     set_led_rgb(false, false, true);
+}
+
+static void show_button_active(void)
+{
+    set_led_rgb(true, true, true);
 }
 
 static void show_operating_color(uint8_t color)
@@ -148,36 +158,29 @@ static bool joystick_button_pressed(void)
     return (PORTBbits.RB2 == 0u);
 }
 
-static bool update_button_state(
-    bool raw_pressed,
-    bool *stable_pressed,
-    bool *last_raw_pressed,
-    uint8_t *stable_samples)
+static bool read_debounced_button(bool stable_pressed)
 {
-    if (raw_pressed != *last_raw_pressed)
+    bool raw_pressed = joystick_button_pressed();
+
+    if (raw_pressed != stable_pressed)
     {
-        *last_raw_pressed = raw_pressed;
-        *stable_samples = 1u;
-        return false;
+        __delay_ms(BUTTON_DEBOUNCE_MS);
+        raw_pressed = joystick_button_pressed();
     }
 
-    if (*stable_samples < BUTTON_DEBOUNCE_SAMPLES)
-    {
-        (*stable_samples)++;
+    return raw_pressed;
+}
 
-        if (*stable_samples < BUTTON_DEBOUNCE_SAMPLES)
-        {
-            return false;
-        }
+static uint8_t next_led_color(uint8_t color)
+{
+    color++;
+
+    if (color >= LED_COLOR_COUNT)
+    {
+        color = LED_COLOR_GREEN;
     }
 
-    if (*stable_pressed != raw_pressed)
-    {
-        *stable_pressed = raw_pressed;
-        return raw_pressed;
-    }
-
-    return false;
+    return color;
 }
 
 static uint16_t filter_adc(uint16_t previous, uint16_t sample)
@@ -192,6 +195,7 @@ static uint16_t map_axis_to_pulse(uint16_t value, uint16_t center)
 {
     uint16_t magnitude;
     uint16_t usable_span;
+    uint16_t pulse_span;
     uint16_t offset;
     uint32_t scaled;
 
@@ -200,13 +204,14 @@ static uint16_t map_axis_to_pulse(uint16_t value, uint16_t center)
         usable_span = (center > JOYSTICK_DEADZONE)
             ? (uint16_t)(center - JOYSTICK_DEADZONE)
             : 1u;
+        pulse_span = (uint16_t)(SERVO_CENTER_COUNT - SERVO_MIN_COUNT);
         magnitude = (uint16_t)(center - JOYSTICK_DEADZONE - value);
-        scaled = ((uint32_t)magnitude * SERVO_RANGE_COUNTS) + (usable_span / 2u);
+        scaled = ((uint32_t)magnitude * pulse_span) + (usable_span / 2u);
         offset = (uint16_t)(scaled / usable_span);
 
-        if (offset > SERVO_RANGE_COUNTS)
+        if (offset > pulse_span)
         {
-            offset = SERVO_RANGE_COUNTS;
+            offset = pulse_span;
         }
 
         return (uint16_t)(SERVO_CENTER_COUNT - offset);
@@ -217,16 +222,47 @@ static uint16_t map_axis_to_pulse(uint16_t value, uint16_t center)
         usable_span = ((uint16_t)(center + JOYSTICK_DEADZONE) < ADC_MAX_VALUE)
             ? (uint16_t)(ADC_MAX_VALUE - center - JOYSTICK_DEADZONE)
             : 1u;
+        pulse_span = (uint16_t)(SERVO_MAX_COUNT - SERVO_CENTER_COUNT);
         magnitude = (uint16_t)(value - center - JOYSTICK_DEADZONE);
-        scaled = ((uint32_t)magnitude * SERVO_RANGE_COUNTS) + (usable_span / 2u);
+        scaled = ((uint32_t)magnitude * pulse_span) + (usable_span / 2u);
         offset = (uint16_t)(scaled / usable_span);
 
-        if (offset > SERVO_RANGE_COUNTS)
+        if (offset > pulse_span)
         {
-            offset = SERVO_RANGE_COUNTS;
+            offset = pulse_span;
         }
 
         return (uint16_t)(SERVO_CENTER_COUNT + offset);
+    }
+
+    return SERVO_CENTER_COUNT;
+}
+
+static uint16_t invert_pulse_around_center(uint16_t pulse)
+{
+    uint16_t source_span;
+    uint16_t target_span;
+    uint16_t magnitude;
+    uint32_t scaled;
+
+    if (pulse < SERVO_CENTER_COUNT)
+    {
+        source_span = (uint16_t)(SERVO_CENTER_COUNT - SERVO_MIN_COUNT);
+        target_span = (uint16_t)(SERVO_MAX_COUNT - SERVO_CENTER_COUNT);
+        magnitude = (uint16_t)(SERVO_CENTER_COUNT - pulse);
+        scaled = ((uint32_t)magnitude * target_span) + (source_span / 2u);
+        magnitude = (uint16_t)(scaled / source_span);
+        return (uint16_t)(SERVO_CENTER_COUNT + magnitude);
+    }
+
+    if (pulse > SERVO_CENTER_COUNT)
+    {
+        source_span = (uint16_t)(SERVO_MAX_COUNT - SERVO_CENTER_COUNT);
+        target_span = (uint16_t)(SERVO_CENTER_COUNT - SERVO_MIN_COUNT);
+        magnitude = (uint16_t)(pulse - SERVO_CENTER_COUNT);
+        scaled = ((uint32_t)magnitude * target_span) + (source_span / 2u);
+        magnitude = (uint16_t)(scaled / source_span);
+        return (uint16_t)(SERVO_CENTER_COUNT - magnitude);
     }
 
     return SERVO_CENTER_COUNT;
@@ -236,7 +272,7 @@ static uint16_t apply_direction(uint16_t pulse, uint8_t inverted)
 {
     if (inverted != 0u)
     {
-        return (uint16_t)(SERVO_MIN_COUNT + SERVO_MAX_COUNT - pulse);
+        return invert_pulse_around_center(pulse);
     }
 
     return pulse;
@@ -298,11 +334,8 @@ int main(void)
     uint16_t current_0 = SERVO_CENTER_COUNT;
     uint16_t current_1 = SERVO_CENTER_COUNT;
     uint8_t selected_led_color = LED_COLOR_GREEN;
-    uint8_t button_stable_samples = 0u;
-    bool button_raw_pressed;
-    bool button_stable_pressed = false;
-    bool button_last_raw_pressed = false;
-    bool button_press_event;
+    bool button_pressed = false;
+    bool button_was_pressed = false;
 
     system_initialize();
     show_calibrating();
@@ -344,38 +377,30 @@ int main(void)
         filtered_x = filter_adc(filtered_x, raw_x);
         filtered_y = filter_adc(filtered_y, raw_y);
 
-        button_raw_pressed = joystick_button_pressed();
-        button_press_event = update_button_state(
-            button_raw_pressed,
-            &button_stable_pressed,
-            &button_last_raw_pressed,
-            &button_stable_samples);
+        button_pressed = read_debounced_button(button_pressed);
 
-        if (button_press_event)
+        if (button_pressed)
         {
-            selected_led_color++;
-
-            if (selected_led_color >= LED_COLOR_COUNT)
-            {
-                selected_led_color = LED_COLOR_GREEN;
-            }
-        }
-
-        show_operating_color(selected_led_color);
-
-        if (button_stable_pressed)
-        {
+            button_was_pressed = true;
             target_0 = SERVO_CENTER_COUNT;
             target_1 = SERVO_CENTER_COUNT;
+            show_button_active();
         }
         else
         {
+            if (button_was_pressed)
+            {
+                button_was_pressed = false;
+                selected_led_color = next_led_color(selected_led_color);
+            }
+
             target_0 = apply_direction(
                 map_axis_to_pulse(filtered_x, center_x),
                 SERVO_0_INVERTED);
             target_1 = apply_direction(
                 map_axis_to_pulse(filtered_y, center_y),
                 SERVO_1_INVERTED);
+            show_operating_color(selected_led_color);
         }
 
         current_0 = approach_target(current_0, target_0);
