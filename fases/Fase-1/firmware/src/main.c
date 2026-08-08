@@ -1,19 +1,22 @@
 /**
  * Robot-Miuva - Fase 1
- * Control manual de dos SG90 con modulo analogico HW-504.
+ * Control incremental de dos SG90 con modulo analogico HW-504.
  *
  * Conexiones:
  *   VRx -> RA0 / AN0 -> servo del canal 0
  *   VRy -> RA1 / AN1 -> servo del canal 1
  *   SW  -> RB2; el modulo cierra el pin hacia GND al presionarlo
  *
- * El sistema calibra el centro durante el arranque, aplica zona muerta,
- * promedio, filtrado y limite de velocidad. Esta prueba utiliza un rango
- * ampliado de 111 a 492 cuentas del PCA9685, aproximadamente 544 a 2400 us
- * con una frecuencia PWM nominal de 50 Hz.
+ * Comportamiento:
+ *   - Cada eje del joystick incrementa o decrementa la posicion almacenada.
+ *   - Al volver el joystick al centro, el servo conserva su ultima posicion.
+ *   - Una inclinacion pequena produce ajustes finos.
+ *   - Una inclinacion grande produce movimientos mas rapidos.
+ *   - El rango se limita entre 111 y 492 cuentas del PCA9685,
+ *     aproximadamente 544 a 2400 us a 50 Hz nominales.
  *
  * Pulsador:
- *   - Mientras esta presionado, ambos servos regresan al centro.
+ *   - Mientras esta presionado, ambos servos regresan suavemente al centro.
  *   - Mientras esta presionado, el LED RGB se muestra blanco.
  *   - Al soltarlo, cambia una sola vez el color operativo del LED RGB.
  *   - Secuencia: verde, azul, cian, magenta, amarillo, blanco.
@@ -54,12 +57,13 @@
 #define ADC_CHANNEL_Y 1u
 #define ADC_MAX_VALUE 1023u
 
-#define SERVO_CHANNEL_0        0u
-#define SERVO_CHANNEL_1        1u
-#define SERVO_MIN_COUNT      111u
-#define SERVO_CENTER_COUNT   307u
-#define SERVO_MAX_COUNT      492u
-#define SERVO_MAX_STEP_COUNTS  8u
+#define SERVO_CHANNEL_0             0u
+#define SERVO_CHANNEL_1             1u
+#define SERVO_MIN_COUNT           111u
+#define SERVO_CENTER_COUNT        307u
+#define SERVO_MAX_COUNT           492u
+#define SERVO_MAX_INCREMENT_COUNTS  8u
+#define SERVO_CENTER_STEP_COUNTS    8u
 
 #define JOYSTICK_STARTUP_SAMPLES 32u
 #define JOYSTICK_LOOP_SAMPLES     4u
@@ -191,122 +195,127 @@ static uint16_t filter_adc(uint16_t previous, uint16_t sample)
     return (uint16_t)(weighted / FILTER_DIVISOR);
 }
 
-static uint16_t map_axis_to_pulse(uint16_t value, uint16_t center)
+static int16_t axis_to_increment(uint16_t value, uint16_t center, uint8_t inverted)
 {
     uint16_t magnitude;
     uint16_t usable_span;
-    uint16_t pulse_span;
-    uint16_t offset;
+    uint16_t step;
     uint32_t scaled;
+    int16_t increment = 0;
 
     if ((uint16_t)(value + JOYSTICK_DEADZONE) < center)
     {
         usable_span = (center > JOYSTICK_DEADZONE)
             ? (uint16_t)(center - JOYSTICK_DEADZONE)
             : 1u;
-        pulse_span = (uint16_t)(SERVO_CENTER_COUNT - SERVO_MIN_COUNT);
         magnitude = (uint16_t)(center - JOYSTICK_DEADZONE - value);
-        scaled = ((uint32_t)magnitude * pulse_span) + (usable_span / 2u);
-        offset = (uint16_t)(scaled / usable_span);
 
-        if (offset > pulse_span)
+        scaled = ((uint32_t)magnitude * SERVO_MAX_INCREMENT_COUNTS)
+            + usable_span - 1u;
+        step = (uint16_t)(scaled / usable_span);
+
+        if (step == 0u)
         {
-            offset = pulse_span;
+            step = 1u;
+        }
+        else if (step > SERVO_MAX_INCREMENT_COUNTS)
+        {
+            step = SERVO_MAX_INCREMENT_COUNTS;
         }
 
-        return (uint16_t)(SERVO_CENTER_COUNT - offset);
+        increment = -(int16_t)step;
     }
-
-    if (value > (uint16_t)(center + JOYSTICK_DEADZONE))
+    else if (value > (uint16_t)(center + JOYSTICK_DEADZONE))
     {
         usable_span = ((uint16_t)(center + JOYSTICK_DEADZONE) < ADC_MAX_VALUE)
             ? (uint16_t)(ADC_MAX_VALUE - center - JOYSTICK_DEADZONE)
             : 1u;
-        pulse_span = (uint16_t)(SERVO_MAX_COUNT - SERVO_CENTER_COUNT);
         magnitude = (uint16_t)(value - center - JOYSTICK_DEADZONE);
-        scaled = ((uint32_t)magnitude * pulse_span) + (usable_span / 2u);
-        offset = (uint16_t)(scaled / usable_span);
 
-        if (offset > pulse_span)
+        scaled = ((uint32_t)magnitude * SERVO_MAX_INCREMENT_COUNTS)
+            + usable_span - 1u;
+        step = (uint16_t)(scaled / usable_span);
+
+        if (step == 0u)
         {
-            offset = pulse_span;
+            step = 1u;
+        }
+        else if (step > SERVO_MAX_INCREMENT_COUNTS)
+        {
+            step = SERVO_MAX_INCREMENT_COUNTS;
         }
 
-        return (uint16_t)(SERVO_CENTER_COUNT + offset);
+        increment = (int16_t)step;
     }
 
-    return SERVO_CENTER_COUNT;
-}
-
-static uint16_t invert_pulse_around_center(uint16_t pulse)
-{
-    uint16_t source_span;
-    uint16_t target_span;
-    uint16_t magnitude;
-    uint32_t scaled;
-
-    if (pulse < SERVO_CENTER_COUNT)
-    {
-        source_span = (uint16_t)(SERVO_CENTER_COUNT - SERVO_MIN_COUNT);
-        target_span = (uint16_t)(SERVO_MAX_COUNT - SERVO_CENTER_COUNT);
-        magnitude = (uint16_t)(SERVO_CENTER_COUNT - pulse);
-        scaled = ((uint32_t)magnitude * target_span) + (source_span / 2u);
-        magnitude = (uint16_t)(scaled / source_span);
-        return (uint16_t)(SERVO_CENTER_COUNT + magnitude);
-    }
-
-    if (pulse > SERVO_CENTER_COUNT)
-    {
-        source_span = (uint16_t)(SERVO_MAX_COUNT - SERVO_CENTER_COUNT);
-        target_span = (uint16_t)(SERVO_CENTER_COUNT - SERVO_MIN_COUNT);
-        magnitude = (uint16_t)(pulse - SERVO_CENTER_COUNT);
-        scaled = ((uint32_t)magnitude * target_span) + (source_span / 2u);
-        magnitude = (uint16_t)(scaled / source_span);
-        return (uint16_t)(SERVO_CENTER_COUNT - magnitude);
-    }
-
-    return SERVO_CENTER_COUNT;
-}
-
-static uint16_t apply_direction(uint16_t pulse, uint8_t inverted)
-{
     if (inverted != 0u)
     {
-        return invert_pulse_around_center(pulse);
+        increment = -increment;
     }
 
-    return pulse;
+    return increment;
 }
 
-static uint16_t approach_target(uint16_t current, uint16_t target)
+static uint16_t apply_increment(uint16_t position, int16_t increment)
+{
+    uint16_t step;
+
+    if (increment > 0)
+    {
+        step = (uint16_t)increment;
+
+        if (step >= (uint16_t)(SERVO_MAX_COUNT - position))
+        {
+            return SERVO_MAX_COUNT;
+        }
+
+        return (uint16_t)(position + step);
+    }
+
+    if (increment < 0)
+    {
+        step = (uint16_t)(-increment);
+
+        if (step >= (uint16_t)(position - SERVO_MIN_COUNT))
+        {
+            return SERVO_MIN_COUNT;
+        }
+
+        return (uint16_t)(position - step);
+    }
+
+    return position;
+}
+
+static uint16_t approach_center(uint16_t position)
 {
     uint16_t distance;
 
-    if (current < target)
+    if (position < SERVO_CENTER_COUNT)
     {
-        distance = (uint16_t)(target - current);
+        distance = (uint16_t)(SERVO_CENTER_COUNT - position);
 
-        if (distance > SERVO_MAX_STEP_COUNTS)
+        if (distance > SERVO_CENTER_STEP_COUNTS)
         {
-            return (uint16_t)(current + SERVO_MAX_STEP_COUNTS);
+            return (uint16_t)(position + SERVO_CENTER_STEP_COUNTS);
         }
 
-        return target;
+        return SERVO_CENTER_COUNT;
     }
 
-    if (current > target)
+    if (position > SERVO_CENTER_COUNT)
     {
-        distance = (uint16_t)(current - target);
+        distance = (uint16_t)(position - SERVO_CENTER_COUNT);
 
-        if (distance > SERVO_MAX_STEP_COUNTS)
+        if (distance > SERVO_CENTER_STEP_COUNTS)
         {
-            return (uint16_t)(current - SERVO_MAX_STEP_COUNTS);
+            return (uint16_t)(position - SERVO_CENTER_STEP_COUNTS);
         }
 
-        return target;
+        return SERVO_CENTER_COUNT;
     }
 
-    return current;
+    return position;
 }
 
 static bool set_servo_positions(uint16_t pulse_0, uint16_t pulse_1)
@@ -329,10 +338,10 @@ int main(void)
     uint16_t raw_y;
     uint16_t filtered_x;
     uint16_t filtered_y;
-    uint16_t target_0;
-    uint16_t target_1;
-    uint16_t current_0 = SERVO_CENTER_COUNT;
-    uint16_t current_1 = SERVO_CENTER_COUNT;
+    uint16_t position_0 = SERVO_CENTER_COUNT;
+    uint16_t position_1 = SERVO_CENTER_COUNT;
+    int16_t increment_0;
+    int16_t increment_1;
     uint8_t selected_led_color = LED_COLOR_GREEN;
     bool button_pressed = false;
     bool button_was_pressed = false;
@@ -382,8 +391,8 @@ int main(void)
         if (button_pressed)
         {
             button_was_pressed = true;
-            target_0 = SERVO_CENTER_COUNT;
-            target_1 = SERVO_CENTER_COUNT;
+            position_0 = approach_center(position_0);
+            position_1 = approach_center(position_1);
             show_button_active();
         }
         else
@@ -394,19 +403,22 @@ int main(void)
                 selected_led_color = next_led_color(selected_led_color);
             }
 
-            target_0 = apply_direction(
-                map_axis_to_pulse(filtered_x, center_x),
+            increment_0 = axis_to_increment(
+                filtered_x,
+                center_x,
                 SERVO_0_INVERTED);
-            target_1 = apply_direction(
-                map_axis_to_pulse(filtered_y, center_y),
+            increment_1 = axis_to_increment(
+                filtered_y,
+                center_y,
                 SERVO_1_INVERTED);
+
+            position_0 = apply_increment(position_0, increment_0);
+            position_1 = apply_increment(position_1, increment_1);
+
             show_operating_color(selected_led_color);
         }
 
-        current_0 = approach_target(current_0, target_0);
-        current_1 = approach_target(current_1, target_1);
-
-        if (!set_servo_positions(current_0, current_1))
+        if (!set_servo_positions(position_0, position_1))
         {
             show_error_forever();
         }
